@@ -1,10 +1,7 @@
-name: Benchmark upload (for PRs)
+name: Benchmark upload
 
 #
-# PRs can contain malicious code, and uploading the report requires access to S3 secrets.
-#
-# Therefore we separate this upload workflow for PRs, to run in a safe context when the
-# benchmark has completed successfully for the PR in the previous job.
+# Uploading benchmarks to S3 is it's own workflow, because PRs can contain malicious code.
 #
 # See also
 #
@@ -20,10 +17,7 @@ jobs:
     name: Upload benchmark report
     runs-on: ubuntu-latest
     # runs-on: warp-ubuntu-latest-x64-16x
-    # if: github.event.workflow_run.conclusion == 'success'
-    if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
       # https://github.com/actions/download-artifact
       - uses: actions/download-artifact@v4
@@ -32,12 +26,14 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      - name: Prepare upload
-        id: prepare
+      - name: Extract report
         run: |
           unzip benchmark-report.zip
           ls -alh benchmark-report/
 
+      - name: Prepare variables
+        id: prepare
+        run: |
           cat benchmark-report/vars.txt
           source benchmark-report/vars.txt
 
@@ -46,7 +42,7 @@ jobs:
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
       # Upload S3 (using https://github.com/shallwefootball/upload-s3-action)
-      - name: Upload report to S3
+      - name: Upload to S3
         uses: shallwefootball/s3-upload-action@master
         id: S3
         with:
@@ -65,8 +61,12 @@ jobs:
           sed -i "s|__BENCH_URL__|${BENCH_URL}|" benchmark-report/benchmark-pr-comment.md
           cat benchmark-report/benchmark-pr-comment.md
 
+          cat benchmark-report/benchmark-pr-comment.md >> $GITHUB_STEP_SUMMARY
+          cat benchmark-report/benchmark-summary.md >> $GITHUB_STEP_SUMMARY
+
       # https://github.com/peter-evans/find-comment
       - name: Find previous PR comment
+        if: steps.prepare.outputs.PR_NUMBER != ''
         uses: peter-evans/find-comment@v3
         id: fc
         with:
@@ -76,6 +76,7 @@ jobs:
 
       # https://github.com/peter-evans/create-or-update-comment
       - name: Create or update PR comment
+        if: steps.prepare.outputs.PR_NUMBER != ''
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
